@@ -1,29 +1,30 @@
 {
-  "name": "meta-pay-interceptor",
+  "name": "meta-automation-tool",
   "version": "1.0.0",
+  "description": "Meta Pay Automation & Interception Tool",
+  "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "build-react": "react-scripts build",
-    "dev": "concurrently \"node server.js\" \"react-scripts start\"",
-    "railway-build": "react-scripts build && node server.js"
+    "start": "npm run build-react && node server.js",
+    "build-react": "cd client && npm run build",
+    "server": "node server.js",
+    "dev": "concurrently \"npm run server\" \"npm run client\""
   },
+  "keywords": [
+    "meta",
+    "facebook",
+    "automation",
+    "paypal",
+    "ads"
+  ],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "axios": "^1.6.7",
+    "axios": "^1.6.2",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.18.2",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1"
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2",
-    "typescript": "^4.9.5",
-    "@types/react": "^18.2.48",
-    "@types/react-dom": "^18.2.18"
-  },
-  "browserslist": {
-    "production": [">0.2%", "not dead", "not op_mini all"],
-    "development": ["last 1 chrome version", "last 1 firefox version", "last 1 safari version"]
+    "concurrently": "^8.2.2"
   }
 }
