@@ -1,30 +1,15 @@
 {
   "name": "meta-automation-tool",
   "version": "1.0.0",
-  "description": "Meta Pay Automation & Interception Tool",
   "main": "server.js",
   "scripts": {
-    "start": "npm run build-react && node server.js",
-    "build-react": "cd client && npm run build",
-    "server": "node server.js",
-    "dev": "concurrently \"npm run server\" \"npm run client\""
+    "start": "node server.js",
+    "server": "node server.js"
   },
-  "keywords": [
-    "meta",
-    "facebook",
-    "automation",
-    "paypal",
-    "ads"
-  ],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "axios": "^1.6.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2"
-  },
-  "devDependencies": {
-    "concurrently": "^8.2.2"
   }
 }
