@@ -180,3 +180,15 @@ button:disabled {
   color: #dbeafe;
 }
 
+.alert-warning {
+  background: rgba(120, 80, 20, 0.35);
+  border-color: rgba(251, 191, 36, 0.3);
+  color: #fef3c7;
+}
+
+.alert-warning code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
