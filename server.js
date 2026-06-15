@@ -9,6 +9,9 @@ const cheerio = require('cheerio');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// تحديد الرابط الأساسي للتطبيق (للاستخدام في return_url)
+const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
@@ -30,7 +33,6 @@ async function extractFbDtsg(cookies) {
   const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
   try {
-    // 1. محاولة استخراج fb_dtsg من صفحة الفيسبوك الرئيسية
     const { data: html } = await axios.get('https://www.facebook.com/', {
       headers: {
         'Cookie': cookies,
@@ -44,23 +46,18 @@ async function extractFbDtsg(cookies) {
     });
 
     const $ = cheerio.load(html);
-
-    // استخراج من input hidden
     const inputDtsg = $('input[name="fb_dtsg"]').val();
     if (inputDtsg) return inputDtsg;
 
-    // استخراج من inline scripts
     const scriptMatch = html.match(/"DTSGInitialData",\[],\{"token":"([^"]+)"/);
     if (scriptMatch) return scriptMatch[1];
 
     const scriptMatch2 = html.match(/"DTSGInitData",\[],\{"token":"([^"]+)"/);
     if (scriptMatch2) return scriptMatch2[1];
 
-    // استخراج من __DTSG
     const dtsgMatch = html.match(/\["DTSGInitialData"\].*?"token":"([^"]+)"/);
     if (dtsgMatch) return dtsgMatch[1];
 
-    // 2. محاولة من صفحة الإعدادات/الحسابات
     const { data: accountsHtml } = await axios.get('https://www.facebook.com/settings/', {
       headers: {
         'Cookie': cookies,
@@ -79,18 +76,18 @@ async function extractFbDtsg(cookies) {
   } catch (error) {
     console.error('Error extracting fb_dtsg:', error.message);
   }
-
   return null;
 }
 
-// ========== تنفيذ GraphQL لربط PayPal ==========
-async function initPayPalLink(cookies, fbDtsg, userId) {
+// ========== تنفيذ GraphQL لربط PayPal مع close_url مخصص ==========
+async function initPayPalLink(cookies, fbDtsg, userId, returnUrl) {
   const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
+  // نستخدم returnUrl الذي نمرره (سيكون /paypal-callback)
   const variables = {
     input: {
       mutation_params: {
-        close_url: "https://secure.facebook.com/payments/redirect/?instance_id=6fe12dd2-c2e2-4ab0-a842-a01e094fbd9b&target_domain=https%3A%2F%2Faccountscenter.facebook.com&type=rp",
+        close_url: returnUrl,  // ✅ تم التعديل: نضع رابط الكول باك الخاص بنا
         login_ref_id: "6fe12dd2-c2e2-4ab0-a842-a01e094fbd9b"
       },
       profile_id: "FXACINFRAOBIDPERVIEWERAVMwhxCKmjhHOsHYDHD2jJttp4MJMP0zcJb-tOnHowAUfL3PcWtQEL4CVskvwI4eC03vgkFlaYWgsVgu8VTFoQzDkQ",
@@ -153,7 +150,7 @@ async function initPayPalLink(cookies, fbDtsg, userId) {
   }
 }
 
-// ========== زرع وسيلة الدفع ==========
+// ========== زرع وسيلة الدفع (نفس السابق) ==========
 async function insertFundingSource(cookies, adAccountId, paymentToken, payerId) {
   const payloads = [
     { payment_method_type: 'paypal', paypal_account: { token: paymentToken, payer_id: payerId } },
@@ -185,7 +182,6 @@ async function insertFundingSource(cookies, adAccountId, paymentToken, payerId) 
         return { success: true, data, endpoint };
       } catch (err) {
         lastError = err;
-        // استمر في المحاولة
       }
     }
   }
@@ -196,7 +192,7 @@ async function insertFundingSource(cookies, adAccountId, paymentToken, payerId) 
 
 // ========== API Routes ==========
 
-// 1. بدء الربط - مع استخراج تلقائي + دعم يدوي
+// 1. بدء الربط - مع استخراج تلقائي + دعم يدوي + return_url مخصص
 app.post('/api/start-linking', async (req, res) => {
   try {
     const { cookies, adAccountId, fbDtsg: manualDtsg } = req.body;
@@ -212,9 +208,7 @@ app.post('/api/start-linking', async (req, res) => {
       return res.status(400).json({ error: 'الكوكيز غير صالحة (لا يوجد c_user)' });
     }
 
-    // استخدام الـ fb_dtsg اليدوي إذا أُرسل، وإلا استخراجه تلقائياً
     let fbDtsg = manualDtsg || null;
-
     if (!fbDtsg) {
       console.log('جاري استخراج fb_dtsg تلقائياً...');
       fbDtsg = await extractFbDtsg(cookies);
@@ -228,7 +222,12 @@ app.post('/api/start-linking', async (req, res) => {
     }
 
     console.log('fb_dtsg extracted successfully, length:', fbDtsg.length);
-    const approvalUrl = await initPayPalLink(cookies, fbDtsg, userId);
+
+    // ✅ إنشاء رابط الـ callback الذي سيعيد PayPal التوجيه إليه
+    const callbackUrl = `${BASE_URL}/paypal-callback`;
+    console.log('Using callback URL:', callbackUrl);
+
+    const approvalUrl = await initPayPalLink(cookies, fbDtsg, userId, callbackUrl);
     res.json({ approvalUrl });
 
   } catch (err) {
@@ -237,7 +236,7 @@ app.post('/api/start-linking', async (req, res) => {
   }
 });
 
-// 2. زرع التوكن
+// 2. زرع التوكن (نفس السابق)
 app.post('/api/insert-funding-source', async (req, res) => {
   try {
     const { cookies, adAccountId, paymentToken, payerId } = req.body;
@@ -252,8 +251,75 @@ app.post('/api/insert-funding-source', async (req, res) => {
   }
 });
 
+// ========== صفحة الـ Callback (تنقل البيانات باستخدام postMessage) ==========
+app.get('/paypal-callback', (req, res) => {
+  const { token, payer_id, PayerID } = req.query;
+  const payerId = payer_id || PayerID;
+
+  if (!token || !payerId) {
+    // إذا لم تكن المعاملات موجودة، نعرض رسالة خطأ بسيطة
+    return res.status(400).send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>PayPal Callback - Missing Data</title></head>
+        <body style="font-family: sans-serif; text-align: center; padding: 40px;">
+          <h2>⚠️ لم يتم استلام التوكن أو معرف الدافع</h2>
+          <p>الرجاء العودة إلى التطبيق والمحاولة مرة أخرى.</p>
+          <script>setTimeout(() => window.close(), 3000);</script>
+        </body>
+      </html>
+    `);
+  }
+
+  // صفحة ناجحة: ترسل البيانات إلى النافذة الأصلية وتغلق نفسها
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>PayPal Linked Successfully</title>
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; padding: 50px; background: #0b1020; color: #edf4ff; }
+          .success { background: #166534; border-radius: 12px; padding: 20px; max-width: 400px; margin: 0 auto; }
+          h1 { color: #ffbf00; }
+          p { margin: 15px 0; }
+          .spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #ffbf00; animation: spin 1s ease-in-out infinite; }
+          @keyframes spin { to { transform: rotate(360deg); } }
+        </style>
+      </head>
+      <body>
+        <div class="success">
+          <h1>✅ تم الربط بنجاح</h1>
+          <p>جاري نقل البيانات إلى التطبيق...</p>
+          <div class="spinner"></div>
+        </div>
+        <script>
+          (function() {
+            try {
+              if (window.opener) {
+                // إرسال البيانات إلى النافذة التي فتحت هذه النافذة
+                window.opener.postMessage({
+                  type: 'PAYPAL_SUCCESS',
+                  token: '${token}',
+                  payerId: '${payerId}'
+                }, '*');
+                // إغلاق النافذة بعد فترة قصيرة
+                setTimeout(() => window.close(), 1000);
+              } else {
+                document.body.innerHTML = '<div class="success"><h1>✅ تم الربط</h1><p>يمكنك الآن إغلاق هذه النافذة والعودة إلى التطبيق.</p><button onclick="window.close()">إغلاق</button></div>';
+              }
+            } catch (err) {
+              console.error(err);
+              document.body.innerHTML = '<div class="success"><h1>⚠️ حدث خطأ</h1><p>الرجاء العودة إلى التطبيق والمحاولة مرة أخرى.</p><button onclick="window.close()">إغلاق</button></div>';
+            }
+          })();
+        </script>
+      </body>
+    </html>
+  `);
+});
+
 // ========== Static Files ==========
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'dist', 'index.html')));
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}, BASE_URL=${BASE_URL}`));
