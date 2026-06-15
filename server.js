@@ -216,6 +216,11 @@ app.post('/api/insert-funding-source', async (req, res) => {
   }
 });
 
+// Health check / root route
+app.get('/', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
 // تقديم ملفات الواجهة المبنية (لـ Railway)
 app.use(express.static(path.join(__dirname, 'build')));
 app.get('*', (req, res) => {
