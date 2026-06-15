@@ -18,13 +18,12 @@ export function useAutomation() {
     setNeedsManualDtsg(false);
 
     try {
-      // إرسال الطلب للسيرفر - السيرفر يستخرج fb_dtsg تلقائياً من الكوكيز
-      // أو يستخدم الـ fbDtsg اليدوي لو المستخدم دخله
+      // 1. الحصول على رابط الموافقة من PayPal عبر السيرفر
       const approvalUrl = await initiatePayPalLinking(cookies, adAccountId, fbDtsg);
 
-      // فتح النافذة المنبثقة
+      // 2. فتح النافذة المنبثقة
       const width = 600;
-      const height = 600;
+      const height = 650;
       const left = window.screenX + (window.outerWidth - width) / 2;
       const top = window.screenY + (window.outerHeight - height) / 2;
 
@@ -38,55 +37,37 @@ export function useAutomation() {
         throw new Error('الرجاء السماح بالنوافذ المنبثقة (Pop-ups) في المتصفح');
       }
 
-      // مراقبة الرابط واستخراج token + payer_id
-      const sniffer = new Promise<{ token: string; payerId: string }>((resolve, reject) => {
-        const startTime = Date.now();
-        const timeout = 5 * 60 * 1000; // 5 دقائق timeout
+      // 3. الاستماع للرسالة من النافذة المنبثقة (عبر postMessage)
+      const messagePromise = new Promise<{ token: string; payerId: string }>((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          window.removeEventListener('message', handler);
+          if (!popup.closed) popup.close();
+          reject(new Error('انتهى الوقت المسموح (5 دقائق). جرب مرة أخرى.'));
+        }, 5 * 60 * 1000); // 5 دقائق
 
-        const interval = setInterval(() => {
-          try {
-            if (Date.now() - startTime > timeout) {
-              clearInterval(interval);
-              popup.close();
-              reject(new Error('انتهى الوقت المسموح. جرب مرة أخرى.'));
-              return;
+        function handler(event: MessageEvent) {
+          // تأكد من أن الرسالة تأتي من النافذة المنبثقة (اختياري: تحقق من origin إذا أردت)
+          // يمكن إضافة التحقق: if (event.origin !== window.location.origin) return;
+          if (event.data && event.data.type === 'PAYPAL_SUCCESS') {
+            const { token, payerId } = event.data;
+            if (token && payerId) {
+              clearTimeout(timeoutId);
+              window.removeEventListener('message', handler);
+              resolve({ token, payerId });
             }
-
-            if (popup.closed) {
-              clearInterval(interval);
-              reject(new Error('أُغلقت النافذة قبل إتمام العملية'));
-              return;
-            }
-
-            // محاولة قراءة الرابط (قد تفشل بسبب سياسة المتصفح وهذا طبيعي)
-            try {
-              const href = popup.location.href;
-              if (href && href.includes('paypal.com') && (href.includes('token=') || href.includes('PayerID='))) {
-                const url = new URL(href);
-                const token = url.searchParams.get('token');
-                const payerId = url.searchParams.get('payer_id') || url.searchParams.get('PayerID');
-
-                if (token && payerId) {
-                  clearInterval(interval);
-                  resolve({ token, payerId });
-                }
-              }
-            } catch {
-              // تجاهل أخطاء الـ Cross-Origin - هذا طبيعي جداً
-            }
-          } catch (e) {
-            // تجاهل أي أخطاء أخرى
           }
-        }, 300);
+        }
+
+        window.addEventListener('message', handler);
       });
 
-      const { token, payerId } = await sniffer;
+      const { token, payerId } = await messagePromise;
       popup.close();
 
       setExtractedToken(token);
       setExtractedPayerId(payerId);
 
-      // زرع وسيلة الدفع
+      // 4. زرع وسيلة الدفع
       await insertFundingSource(cookies, adAccountId, token, payerId);
       setSuccess(true);
 
