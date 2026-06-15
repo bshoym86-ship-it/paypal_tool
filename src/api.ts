@@ -1,11 +1,12 @@
 import axios from 'axios';
-
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
-export async function initiatePayPalLinking(cookies: string, adAccountId: string) {
+// تعديل الدالة لاستقبال fb_dtsg كوسيط
+export async function initiatePayPalLinking(cookies: string, adAccountId: string, fbDtsg: string) {
   const { data } = await axios.post(`${API_BASE}/api/start-linking`, {
     cookies,
-    adAccountId
+    adAccountId,
+    fbDtsg // إرسال التوكن المستخرج
   });
   return data.approvalUrl as string;
 }
