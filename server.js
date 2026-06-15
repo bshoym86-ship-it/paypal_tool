@@ -1,4 +1,4 @@
-// server.js
+// server.js (نسخة معدلة بالكامل مع تحسين extractFbDtsg)
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -8,8 +8,6 @@ const cheerio = require('cheerio');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
-
-// تحديد الرابط الأساسي للتطبيق (للاستخدام في return_url)
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
 app.use(cors());
@@ -28,53 +26,40 @@ function normalizeAdAccountId(value) {
   return trimmed.startsWith('act_') ? trimmed : `act_${trimmed}`;
 }
 
-// ========== استخراج fb_dtsg من الكوكيز ==========
+// ========== استخراج fb_dtsg من الكوكيز (دون رمي استثناء) ==========
 async function extractFbDtsg(cookies) {
   const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+  const targets = [
+    'https://www.facebook.com/',
+    'https://mbasic.facebook.com/'
+  ];
 
-  try {
-    const { data: html } = await axios.get('https://www.facebook.com/', {
-      headers: {
-        'Cookie': cookies,
-        'User-Agent': userAgent,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'no-cache'
-      },
-      timeout: 15000,
-      maxRedirects: 5
-    });
+  for (const target of targets) {
+    try {
+      const { data: html } = await axios.get(target, {
+        headers: {
+          'Cookie': cookies,
+          'User-Agent': userAgent,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9'
+        },
+        timeout: 15000,
+        maxRedirects: 5
+      });
 
-    const $ = cheerio.load(html);
-    const inputDtsg = $('input[name="fb_dtsg"]').val();
-    if (inputDtsg) return inputDtsg;
+      const $ = cheerio.load(html);
+      const inputDtsg = $('input[name="fb_dtsg"]').val();
+      if (inputDtsg) return inputDtsg;
 
-    const scriptMatch = html.match(/"DTSGInitialData",\[],\{"token":"([^"]+)"/);
-    if (scriptMatch) return scriptMatch[1];
+      const match = html.match(/"DTSGInitialData",\[\],\{"token":"([^"]+)"/);
+      if (match) return match[1];
 
-    const scriptMatch2 = html.match(/"DTSGInitData",\[],\{"token":"([^"]+)"/);
-    if (scriptMatch2) return scriptMatch2[1];
-
-    const dtsgMatch = html.match(/\["DTSGInitialData"\].*?"token":"([^"]+)"/);
-    if (dtsgMatch) return dtsgMatch[1];
-
-    const { data: accountsHtml } = await axios.get('https://www.facebook.com/settings/', {
-      headers: {
-        'Cookie': cookies,
-        'User-Agent': userAgent,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-      },
-      timeout: 15000
-    });
-
-    const scriptMatch3 = accountsHtml.match(/"DTSGInitialData",\[],\{"token":"([^"]+)"/);
-    if (scriptMatch3) return scriptMatch3[1];
-
-    const inputDtsg2 = cheerio.load(accountsHtml)('input[name="fb_dtsg"]').val();
-    if (inputDtsg2) return inputDtsg2;
-
-  } catch (error) {
-    console.error('Error extracting fb_dtsg:', error.message);
+      const match2 = html.match(/"DTSGInitData",\[\],\{"token":"([^"]+)"/);
+      if (match2) return match2[1];
+    } catch (err) {
+      console.log(`extractFbDtsg: ${target} failed - ${err.message}`);
+      // نستمر للمحاولة التالية
+    }
   }
   return null;
 }
@@ -83,11 +68,10 @@ async function extractFbDtsg(cookies) {
 async function initPayPalLink(cookies, fbDtsg, userId, returnUrl) {
   const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
-  // نستخدم returnUrl الذي نمرره (سيكون /paypal-callback)
   const variables = {
     input: {
       mutation_params: {
-        close_url: returnUrl,  // ✅ تم التعديل: نضع رابط الكول باك الخاص بنا
+        close_url: returnUrl,
         login_ref_id: "6fe12dd2-c2e2-4ab0-a842-a01e094fbd9b"
       },
       profile_id: "FXACINFRAOBIDPERVIEWERAVMwhxCKmjhHOsHYDHD2jJttp4MJMP0zcJb-tOnHowAUfL3PcWtQEL4CVskvwI4eC03vgkFlaYWgsVgu8VTFoQzDkQ",
@@ -150,7 +134,7 @@ async function initPayPalLink(cookies, fbDtsg, userId, returnUrl) {
   }
 }
 
-// ========== زرع وسيلة الدفع (نفس السابق) ==========
+// ========== زرع وسيلة الدفع ==========
 async function insertFundingSource(cookies, adAccountId, paymentToken, payerId) {
   const payloads = [
     { payment_method_type: 'paypal', paypal_account: { token: paymentToken, payer_id: payerId } },
@@ -191,8 +175,6 @@ async function insertFundingSource(cookies, adAccountId, paymentToken, payerId) 
 }
 
 // ========== API Routes ==========
-
-// 1. بدء الربط - مع استخراج تلقائي + دعم يدوي + return_url مخصص
 app.post('/api/start-linking', async (req, res) => {
   try {
     const { cookies, adAccountId, fbDtsg: manualDtsg } = req.body;
@@ -222,21 +204,15 @@ app.post('/api/start-linking', async (req, res) => {
     }
 
     console.log('fb_dtsg extracted successfully, length:', fbDtsg.length);
-
-    // ✅ إنشاء رابط الـ callback الذي سيعيد PayPal التوجيه إليه
     const callbackUrl = `${BASE_URL}/paypal-callback`;
-    console.log('Using callback URL:', callbackUrl);
-
     const approvalUrl = await initPayPalLink(cookies, fbDtsg, userId, callbackUrl);
     res.json({ approvalUrl });
-
   } catch (err) {
     console.error('Server Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// 2. زرع التوكن (نفس السابق)
 app.post('/api/insert-funding-source', async (req, res) => {
   try {
     const { cookies, adAccountId, paymentToken, payerId } = req.body;
@@ -251,13 +227,12 @@ app.post('/api/insert-funding-source', async (req, res) => {
   }
 });
 
-// ========== صفحة الـ Callback (تنقل البيانات باستخدام postMessage) ==========
+// ========== صفحة Callback ==========
 app.get('/paypal-callback', (req, res) => {
   const { token, payer_id, PayerID } = req.query;
   const payerId = payer_id || PayerID;
 
   if (!token || !payerId) {
-    // إذا لم تكن المعاملات موجودة، نعرض رسالة خطأ بسيطة
     return res.status(400).send(`
       <!DOCTYPE html>
       <html>
@@ -271,7 +246,6 @@ app.get('/paypal-callback', (req, res) => {
     `);
   }
 
-  // صفحة ناجحة: ترسل البيانات إلى النافذة الأصلية وتغلق نفسها
   res.send(`
     <!DOCTYPE html>
     <html>
@@ -296,13 +270,11 @@ app.get('/paypal-callback', (req, res) => {
           (function() {
             try {
               if (window.opener) {
-                // إرسال البيانات إلى النافذة التي فتحت هذه النافذة
                 window.opener.postMessage({
                   type: 'PAYPAL_SUCCESS',
                   token: '${token}',
                   payerId: '${payerId}'
                 }, '*');
-                // إغلاق النافذة بعد فترة قصيرة
                 setTimeout(() => window.close(), 1000);
               } else {
                 document.body.innerHTML = '<div class="success"><h1>✅ تم الربط</h1><p>يمكنك الآن إغلاق هذه النافذة والعودة إلى التطبيق.</p><button onclick="window.close()">إغلاق</button></div>';
