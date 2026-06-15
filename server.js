@@ -6,16 +6,13 @@ const cors = require('cors');
 const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080; // Railway uses 8080 usually
 
 app.use(cors());
 app.use(express.json());
 
 // ========== دوال مساعدة ==========
-
-// استخراج قيمة محددة من كوكيز
 function getCookieValue(cookies, name) {
-  // تنظيف الكوكيز من المسافات الزائدة إذا وجدت
   const cleanCookies = cookies.replace(/;\s*/g, ';');
   const match = cleanCookies.match(new RegExp(`(?:^|;)${name}=([^;]*)`));
   return match ? decodeURIComponent(match[1]) : null;
@@ -27,52 +24,18 @@ function normalizeAdAccountId(value) {
   return trimmed.startsWith('act_') ? trimmed : `act_${trimmed}`;
 }
 
-// استخراج fb_dtsg من HTML الصفحة الرئيسية لفيسبوك
-async function extractFbDtsg(cookies) {
-  try {
-    // تم تصحيح User-Agent وترويسات الطلب لتجنب الحظر
-    const { data: html } = await axios.get('https://www.facebook.com/', {
-      headers: {
-        Cookie: cookies,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5'
-      }
-    });
-    
-    // محاولة العثور على fb_dtsg في HTML
-    const match = html.match(/name="fb_dtsg" content="([^"]+)"/);
-    if (match) return match[1];
-    
-    // محاولة أخرى من حالة JavaScript الأولية
-    const jsMatch = html.match(/["DTSGInitialData",\s*[],\s*{"token":"([^"]+)"}]/);
-    if (jsMatch) return jsMatch[1];
-    
-    throw new Error('لم يتم العثور على fb_dtsg (قد تكون الجلسة منتهية أو الحساب محظور)');
-  } catch (err) {
-    throw new Error('فشل استخراج fb_dtsg: ' + err.message);
-  }
-}
-
-// استخراج profile_id الخاص بالدفع
-async function extractPaymentProfileId(cookies, userId) {
-  try {
-    // هذه الدالة تعتمد على هيكلية قد تتغير، لذا نستخدم fallback في الدالة التالية
-    return null; 
-  } catch {
-    return null;
-  }
-}
-
 // تنفيذ GraphQL لربط PayPal
-async function initPayPalLink(cookies, fbDtsg, userId, profileId) {
+async function initPayPalLink(cookies, fbDtsg, userId) {
+  // تم تحديث User-Agent ليكون مطابقاً للمتصفح تماماً
+  const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+
   const variables = {
     input: {
       mutation_params: {
         close_url: "https://secure.facebook.com/payments/redirect/?instance_id=6fe12dd2-c2e2-4ab0-a842-a01e094fbd9b&target_domain=https%3A%2F%2Faccountscenter.facebook.com&type=rp",
         login_ref_id: "6fe12dd2-c2e2-4ab0-a842-a01e094fbd9b"
       },
-      profile_id: profileId || "FXACINFRAOBIDPERVIEWERAVMwhxCKmjhHOsHYDHD2jJttp4MJMP0zcJb-tOnHowAUfL3PcWtQEL4CVskvwI4eC03vgkFlaYWgsVgu8VTFoQzDkQ", // قيمة fallback
+      profile_id: "FXACINFRAOBIDPERVIEWERAVMwhxCKmjhHOsHYDHD2jJttp4MJMP0zcJb-tOnHowAUfL3PcWtQEL4CVskvwI4eC03vgkFlaYWgsVgu8VTFoQzDkQ",
       actor_id: userId,
       client_mutation_id: "3"
     }
@@ -81,14 +44,13 @@ async function initPayPalLink(cookies, fbDtsg, userId, profileId) {
   const body = new URLSearchParams({
     __a: "1",
     __req: "17",
-    // تم تصحيح القيمة هنا (إزالة ... التي تسبب خطأ)
-    __hs: "20618.HYP:accounts_center_pkg.2.1..0", 
+    __hs: "20618.HYP:accounts_center_pkg.2.1..0",
     dpr: "1",
-    __ccg: "EXCELLENT",
+    __ccg: "UNKNOWN",
     __rev: "1041437765",
     __s: "3zgi2m:uc0vqk:jd0d7n",
     __hsi: "7651186107637418310",
-    fb_dtsg: fbDtsg,
+    fb_dtsg: fbDtsg, // استخدام التوكن المستلم
     jazoest: "25481",
     lsd: "KwP0jGeBpHXvN5AOyE1svL",
     fb_api_caller_class: "RelayModern",
@@ -106,9 +68,9 @@ async function initPayPalLink(cookies, fbDtsg, userId, profileId) {
         headers: {
           Cookie: cookies,
           'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-          'Referer': 'https://www.facebook.com/',
-          'Origin': 'https://www.facebook.com'
+          'User-Agent': userAgent,
+          'Origin': 'https://www.facebook.com',
+          'Referer': 'https://www.facebook.com/'
         }
       }
     );
@@ -119,29 +81,25 @@ async function initPayPalLink(cookies, fbDtsg, userId, profileId) {
       data?.data?.redirect_url;
 
     if (!approvalUrl) {
-      console.error('رد Facebook:', JSON.stringify(data));
-      throw new Error('لم يتم العثور على رابط PayPal في رد Facebook (ربما تحتاج لتأكيد الحساب)');
+      console.error('Facebook Response:', JSON.stringify(data));
+      throw new Error('لم يتم العثور على رابط PayPal. تأكد من صحة الكوكيز.');
     }
-
     return approvalUrl;
   } catch (error) {
-    throw new Error('فشل الاتصال بـ Facebook API: ' + (error.response?.data?.error?.message || error.message));
+    if (error.response) {
+        throw new Error(`خطأ من فيسبوك (${error.response.status}): ${JSON.stringify(error.response.data)}`);
+    }
+    throw new Error('فشل الاتصال بـ Facebook API');
   }
 }
 
-// زرع وسيلة الدفع في الحساب الإعلاني
+// زرع وسيلة الدفع
 async function insertFundingSource(cookies, adAccountId, paymentToken, payerId) {
   const payloads = [
-    {
-      payment_method_type: 'paypal',
-      paypal_account: { token: paymentToken, payer_id: payerId }
-    },
-    {
-      payment_method_type: 'paypal',
-      payment_method_token: { token: paymentToken, payer_id: payerId }
-    }
+    { payment_method_type: 'paypal', paypal_account: { token: paymentToken, payer_id: payerId } },
+    { payment_method_type: 'paypal', payment_method_token: { token: paymentToken, payer_id: payerId } }
   ];
-
+  
   const endpoints = [
     `/v18.0/${adAccountId}/funding_sources`,
     `/v18.0/me/funding_sources`
@@ -163,34 +121,34 @@ async function insertFundingSource(cookies, adAccountId, paymentToken, payerId) 
         );
         return { success: true, data };
       } catch (err) {
-        // استمر في المحاولة التالية
+        // استمر في المحاولة
       }
     }
   }
-  throw new Error('فشلت جميع محاولات زرع وسيلة الدفع');
+  throw new Error('فشلت محاولات الزرع');
 }
 
 // ========== API Routes ==========
-
+// 1. استقبال التوكن من المتصفح
 app.post('/api/start-linking', async (req, res) => {
   try {
-    const { cookies, adAccountId } = req.body;
+    const { cookies, adAccountId, fbDtsg } = req.body;
+    
     if (!cookies || !adAccountId) {
-      return res.status(400).json({ error: 'مطلوب cookies و adAccountId' });
+      return res.status(400).json({ error: 'بيانات ناقصة' });
     }
+    // إذا لم يتم إرسال التوكن من الواجهة، نرجع خطأ
+    if (!fbDtsg) {
+      return res.status(400).json({ error: 'لم يتم استلام fb_dtsg من المتصفح' });
+    }
+
     const normalizedAdAccountId = normalizeAdAccountId(adAccountId);
-
-    // استخراج user ID من الكوكيز
     const userId = getCookieValue(cookies, 'c_user');
-    if (!userId) throw new Error('لم يتم العثور على c_user في الكوكيز');
+    
+    if (!userId) throw new Error('الكوكيز غير صالحة (لا يوجد c_user)');
 
-    // استخراج fb_dtsg تلقائياً
-    const fbDtsg = await extractFbDtsg(cookies);
-    // محاولة استخراج profile_id
-    const profileId = await extractPaymentProfileId(cookies, userId);
-
-    // بدء ربط PayPal
-    const approvalUrl = await initPayPalLink(cookies, fbDtsg, userId, profileId, normalizedAdAccountId);
+    // استخدام التوكن المستلم مباشرة
+    const approvalUrl = await initPayPalLink(cookies, fbDtsg, userId);
     res.json({ approvalUrl });
   } catch (err) {
     console.error('Server Error:', err.message);
@@ -198,24 +156,21 @@ app.post('/api/start-linking', async (req, res) => {
   }
 });
 
+// 2. زرع التوكن
 app.post('/api/insert-funding-source', async (req, res) => {
   try {
     const { cookies, adAccountId, paymentToken, payerId } = req.body;
     if (!cookies || !adAccountId || !paymentToken || !payerId) {
       return res.status(400).json({ error: 'بيانات ناقصة' });
     }
-    const normalizedAdAccountId = normalizeAdAccountId(adAccountId);
-    const result = await insertFundingSource(cookies, normalizedAdAccountId, paymentToken, payerId);
+    const result = await insertFundingSource(cookies, normalizeAdAccountId(adAccountId), paymentToken, payerId);
     res.json({ success: true, data: result });
   } catch (err) {
-    console.error('Server Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 app.use(express.static(path.join(__dirname, 'dist')));
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-});
+app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'dist', 'index.html')));
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
