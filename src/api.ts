@@ -1,12 +1,12 @@
 import axios from 'axios';
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
-// تعديل الدالة لاستقبال fb_dtsg كوسيط
-export async function initiatePayPalLinking(cookies: string, adAccountId: string, fbDtsg: string) {
+// بدء ربط PayPal - الـ fbDtsg اختياري (السيرفر يستخرجه تلقائياً لو مبعوتش)
+export async function initiatePayPalLinking(cookies: string, adAccountId: string, fbDtsg?: string) {
   const { data } = await axios.post(`${API_BASE}/api/start-linking`, {
     cookies,
     adAccountId,
-    fbDtsg // إرسال التوكن المستخرج
+    fbDtsg: fbDtsg || undefined // مبنعملش send null عشان ما يعملش مشاكل
   });
   return data.approvalUrl as string;
 }
