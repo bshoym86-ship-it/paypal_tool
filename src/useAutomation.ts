@@ -25,7 +25,7 @@ export function useAutomation() {
       const left = window.screenX + (window.outerWidth - width) / 2;
       const top = window.screenY + (window.outerHeight - height) / 2;
 
-      // تم تصحيح المسافات هنا
+      // تم تصحيح مسافات الكتابة
       const popup = window.open(
         approvalUrl,
         'paypal_popup',
@@ -48,11 +48,9 @@ export function useAutomation() {
 
             let href: string;
             try {
-              // ملاحظة: هذا السطر سينجح فقط إذا كانت النافذة على نفس الدومين
-              // أو إذا كان المتصفح لا يمنع قراءة العنوان (CORS)
+              // محاولة قراءة الرابط (قد تفشل بسبب سياسات المتصفح)
               href = popup.location.href;
             } catch {
-              // خطأ متوقع عند التواجد في نطاق PayPal
               return;
             }
 
@@ -83,8 +81,10 @@ export function useAutomation() {
       await insertFundingSource(cookies, adAccountId, token, payerId);
       setSuccess(true);
     } catch (err: any) {
-      // تم تصحيح 'خطأ غي ر معروف'
-      setError(err.message || 'خطأ غير معروف');
+      // تم التعديل هنا لالتقاط رسالة الخطأ من السيرفر بدقة
+      // إذا كان الخطأ من axios (من السيرفر)، نأخذ data.error
+      const serverMessage = err.response?.data?.error;
+      setError(serverMessage || err.message || 'خطأ غير معروف');
     } finally {
       setLoading(false);
     }
