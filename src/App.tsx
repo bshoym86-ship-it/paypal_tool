@@ -2,6 +2,12 @@ import React, { useState } from 'react';
 import { useAutomation } from './useAutomation';
 import './App.css';
 
+function normalizeAdAccountId(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  return trimmed.startsWith('act_') ? trimmed : `act_${trimmed}`;
+}
+
 function App() {
   const [cookies, setCookies] = useState('');
   const [adAccountId, setAdAccountId] = useState('');
@@ -10,40 +16,50 @@ function App() {
   const handleStart = (e: React.FormEvent) => {
     e.preventDefault();
     if (!cookies || !adAccountId) return;
-    startInterception(cookies, adAccountId);
+
+    const normalizedAdAccountId = normalizeAdAccountId(adAccountId);
+    startInterception(cookies, normalizedAdAccountId);
   };
 
   return (
     <div className="dark-mode">
       <div className="container">
-        <h1>⚡ Meta Pay Interceptor</h1>
-        <p className="subtitle">أداة ربط بايبال بحساب الإعلانات دون تثبيت</p>
+        <div className="brand-wrap">
+          <div>
+            <div className="badge">⚡ ClickBridge</div>
+            <h1>أداة ربط PayPal بحساب الإعلانات</h1>
+          </div>
+          <div className="badge">Live</div>
+        </div>
+        <p className="subtitle">واجهة بسيطة وسريعة لإدخال الكوكيز ومعرف الحساب، مع نتائج واضحة وخطوات واضحة.</p>
 
-        <form onSubmit={handleStart}>
-          <label htmlFor="cookies">ملفات تعريف الارتباط (Cookies)</label>
-          <textarea
-            id="cookies"
-            rows={5}
-            value={cookies}
-            onChange={e => setCookies(e.target.value)}
-            placeholder="الصق الكوكيز كاملة من المتصفح (c_user=...; xs=...; fr=...; datr=...; sb=...)"
-            required
-          />
+        <div className="form-card">
+          <form onSubmit={handleStart}>
+            <label htmlFor="cookies">ملفات تعريف الارتباط (Cookies)</label>
+            <textarea
+              id="cookies"
+              rows={5}
+              value={cookies}
+              onChange={e => setCookies(e.target.value)}
+              placeholder="الصق الكوكيز كاملة من المتصفح (c_user=...; xs=...; fr=...; datr=...; sb=...)"
+              required
+            />
 
-          <label htmlFor="adAccount">معرف الحساب الإعلاني (Ad Account ID)</label>
-          <input
-            id="adAccount"
-            type="text"
-            value={adAccountId}
-            onChange={e => setAdAccountId(e.target.value)}
-            placeholder="act_123456789"
-            required
-          />
+            <label htmlFor="adAccount">معرف الحساب الإعلاني (Ad Account ID)</label>
+            <input
+              id="adAccount"
+              type="text"
+              value={adAccountId}
+              onChange={e => setAdAccountId(e.target.value)}
+              placeholder="123456789 أو act_123456789"
+              required
+            />
 
-          <button type="submit" disabled={loading}>
-            {loading ? 'جارٍ المعالجة...' : 'بدء الربط'}
-          </button>
-        </form>
+            <button type="submit" disabled={loading} className="paypal-btn">
+              {loading ? 'جارٍ المعالجة...' : 'PayPal • بدء الربط'}
+            </button>
+          </form>
+        </div>
 
         {error && <div className="alert alert-error">❌ {error}</div>}
         {success && <div className="alert alert-success">✅ تم زرع وسيلة الدفع بنجاح!</div>}

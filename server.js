@@ -18,6 +18,12 @@ function getCookieValue(cookies, name) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+function normalizeAdAccountId(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  return trimmed.startsWith('act_') ? trimmed : `act_${trimmed}`;
+}
+
 // استخراج fb_dtsg من HTML الصفحة الرئيسية لفيسبوك
 async function extractFbDtsg(cookies) {
   try {
@@ -184,6 +190,8 @@ app.post('/api/start-linking', async (req, res) => {
       return res.status(400).json({ error: 'مطلوب cookies و adAccountId' });
     }
 
+    const normalizedAdAccountId = normalizeAdAccountId(adAccountId);
+
     // استخراج user ID من الكوكيز
     const userId = getCookieValue(cookies, 'c_user');
     if (!userId) throw new Error('لم يتم العثور على c_user في الكوكيز');
@@ -194,7 +202,7 @@ app.post('/api/start-linking', async (req, res) => {
     const profileId = await extractPaymentProfileId(cookies, userId);
 
     // بدء ربط PayPal
-    const approvalUrl = await initPayPalLink(cookies, fbDtsg, userId, profileId);
+    const approvalUrl = await initPayPalLink(cookies, fbDtsg, userId, profileId, normalizedAdAccountId);
     res.json({ approvalUrl });
   } catch (err) {
     console.error(err);
@@ -209,7 +217,8 @@ app.post('/api/insert-funding-source', async (req, res) => {
     if (!cookies || !adAccountId || !paymentToken || !payerId) {
       return res.status(400).json({ error: 'بيانات ناقصة' });
     }
-    const result = await insertFundingSource(cookies, adAccountId, paymentToken, payerId);
+    const normalizedAdAccountId = normalizeAdAccountId(adAccountId);
+    const result = await insertFundingSource(cookies, normalizedAdAccountId, paymentToken, payerId);
     res.json({ success: true, data: result });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -217,9 +226,9 @@ app.post('/api/insert-funding-source', async (req, res) => {
 });
 
 // تقديم ملفات الواجهة المبنية (لـ Railway)
-app.use(express.static(path.join(__dirname, 'build')));
+app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'build', 'index.html'));
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
