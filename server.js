@@ -28,6 +28,10 @@ function normalizeAdAccountId(value) {
 
 // ========== استخراج fb_dtsg من الكوكيز (دون رمي استثناء) ==========
 async function extractFbDtsg(cookies) {
+  console.log('\n========================================');
+  console.log('🔍 بدء استخراج fb_dtsg...');
+  console.log('========================================');
+
   const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
   const targets = [
     'https://www.facebook.com/',
@@ -36,6 +40,7 @@ async function extractFbDtsg(cookies) {
 
   for (const target of targets) {
     try {
+      console.log(`📡 جاري الاتصال بـ: ${target}`);
       const { data: html } = await axios.get(target, {
         headers: {
           'Cookie': cookies,
@@ -47,20 +52,38 @@ async function extractFbDtsg(cookies) {
         maxRedirects: 5
       });
 
+      console.log(`✅ تم استلام HTML من ${target} - طول: ${html.length} حرف`);
+
       const $ = cheerio.load(html);
       const inputDtsg = $('input[name="fb_dtsg"]').val();
-      if (inputDtsg) return inputDtsg;
+      if (inputDtsg) {
+        console.log(`✅ تم العثور على fb_dtsg من input tag: ${inputDtsg.substring(0, 20)}...`);
+        return inputDtsg;
+      }
 
       const match = html.match(/"DTSGInitialData",\[\],\{"token":"([^"]+)"/);
-      if (match) return match[1];
+      if (match) {
+        console.log(`✅ تم العثور على fb_dtsg من DTSGInitialData: ${match[1].substring(0, 20)}...`);
+        return match[1];
+      }
 
       const match2 = html.match(/"DTSGInitData",\[\],\{"token":"([^"]+)"/);
-      if (match2) return match2[1];
+      if (match2) {
+        console.log(`✅ تم العثور على fb_dtsg من DTSGInitData: ${match2[1].substring(0, 20)}...`);
+        return match2[1];
+      }
+
+      console.log(`❌ لم يتم العثور على fb_dtsg في ${target}`);
     } catch (err) {
-      console.log(`extractFbDtsg: ${target} failed - ${err.message}`);
+      console.log(`❌ خطأ في ${target}: ${err.message}`);
       // نستمر للمحاولة التالية
     }
   }
+
+  console.log('========================================');
+  console.log('❌ فشل استخراج fb_dtsg من جميع المصادر');
+  console.log('💡 الحل: أدخل fb_dtsg يدوياً من الكوكيز');
+  console.log('========================================\n');
   return null;
 }
 
@@ -179,12 +202,22 @@ app.post('/api/start-linking', async (req, res) => {
   try {
     const { cookies, adAccountId, fbDtsg: manualDtsg } = req.body;
 
+    console.log('\n========================================');
+    console.log('🚀 NEW PAYPAL LINKING REQUEST');
+    console.log('========================================');
+    console.log('📧 Ad Account ID:', adAccountId);
+    console.log('🍪 Cookies length:', cookies ? cookies.length : 0);
+    console.log('🔑 Manual fb_dtsg provided:', manualDtsg ? 'YES' : 'NO');
+    console.log('========================================\n');
+
     if (!cookies || !adAccountId) {
       return res.status(400).json({ error: 'بيانات ناقصة: الكوكيز ومعرف الحساب الإعلاني مطلوبان' });
     }
 
     const normalizedAdAccountId = normalizeAdAccountId(adAccountId);
     const userId = getCookieValue(cookies, 'c_user');
+
+    console.log('👤 Extracted User ID (c_user):', userId);
 
     if (!userId) {
       return res.status(400).json({ error: 'الكوكيز غير صالحة (لا يوجد c_user)' });
@@ -231,6 +264,15 @@ app.post('/api/insert-funding-source', async (req, res) => {
 app.get('/paypal-callback', (req, res) => {
   const { token, payer_id, PayerID } = req.query;
   const payerId = payer_id || PayerID;
+
+  // Log extracted data to server console
+  console.log('\n========================================');
+  console.log('🎉 PAYPAL CALLBACK DATA RECEIVED 🎉');
+  console.log('========================================');
+  console.log('📧 Token:', token);
+  console.log('🆔 PayerID:', payerId);
+  console.log('📊 Full Query Parameters:', JSON.stringify(req.query, null, 2));
+  console.log('========================================\n');
 
   if (!token || !payerId) {
     return res.status(400).send(`
